@@ -3,6 +3,7 @@ package scope
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -135,6 +136,24 @@ func TestContext(t *testing.T) {
 				<-ctrl
 				root.Cancel()
 				So(<-ch, ShouldEqual, Cancelled)
+			})
+		})
+
+		Convey("Timeout", func() {
+			Convey("Timeout expires", func() {
+				start := time.Now()
+				ctx := New().ForkWithTimeout(10 * time.Millisecond)
+				<-ctx.Done()
+				So(time.Now().Sub(start), ShouldBeGreaterThanOrEqualTo, 10*time.Millisecond)
+				So(ctx.Err(), ShouldEqual, TimedOut)
+			})
+
+			Convey("Context terminates before expiration", func() {
+				ctx := New().ForkWithTimeout(10 * time.Millisecond)
+				time.Sleep(5 * time.Millisecond)
+				ctx.Terminate(nil)
+				time.Sleep(10 * time.Millisecond)
+				So(ctx.Err(), ShouldBeNil)
 			})
 		})
 	})

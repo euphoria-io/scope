@@ -3,11 +3,14 @@ package scope
 import (
 	"errors"
 	"sync"
+	"time"
 )
 
 var (
 	Cancelled = errors.New("context cancelled")
 	Canceled  = Cancelled
+
+	TimedOut = errors.New("context timed out")
 )
 
 // A Context is a handle on a node within a shared scope. This shared scope
@@ -33,6 +36,11 @@ type Context interface {
 
 	// Fork creates and returns a new context as a child of this one.
 	Fork() Context
+
+	// ForkWithTimeout creates and returns a new context as a child of this
+	// one. It also spins off a timer which will cancel the context after
+	// the given duration (unless the context terminates first).
+	ForkWithTimeout(time.Duration) Context
 
 	// Get returns the value associated with the given key. If this context
 	// has had no values set, then the lookup is made on the nearest ancestor
@@ -80,6 +88,7 @@ func New() Context {
 type ContextTree struct {
 	wg       *sync.WaitGroup
 	m        sync.RWMutex
+	termed   bool
 	done     chan struct{}
 	err      error
 	data     kvmap
@@ -113,7 +122,8 @@ func (ctx *ContextTree) Terminate(err error) {
 }
 
 func (ctx *ContextTree) terminate(err error) {
-	if ctx.err == nil {
+	if !ctx.termed {
+		ctx.termed = true
 		ctx.err = err
 		for child := range ctx.children {
 			child.m.Lock()
@@ -140,6 +150,23 @@ func (ctx *ContextTree) Fork() Context {
 		child.aliased = ctx.aliased
 	}
 	ctx.children[child] = struct{}{}
+	return child
+}
+
+// ForkWithTimeout creates and returns a new context as a child of this
+// one. It also spins off a timer which will cancel the context after
+// the given duration (unless the context terminates first).
+func (ctx *ContextTree) ForkWithTimeout(dur time.Duration) Context {
+	timer := time.NewTimer(dur)
+	child := ctx.Fork()
+	go func() {
+		select {
+		case <-child.Done():
+			timer.Stop()
+		case <-timer.C:
+			child.Terminate(TimedOut)
+		}
+	}()
 	return child
 }
 
