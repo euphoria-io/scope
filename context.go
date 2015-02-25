@@ -17,8 +17,11 @@ var (
 // takes the form of a tree of such nodes, for sharing state across
 // coordinating goroutines.
 type Context interface {
+	// Alive returns true if the context has not completed.
+	Alive() bool
+
 	// Done returns a receive-only channel that will be closed when this
-	// context (or any of its ancestors) is terminated.
+	// context (or any of its ancestors) terminates.
 	Done() <-chan struct{}
 
 	// Err returns the error this context was terminated with.
@@ -100,6 +103,9 @@ type ContextTree struct {
 // tree.
 func (ctx *ContextTree) WaitGroup() *sync.WaitGroup { return ctx.wg }
 
+// Alive returns true if the context has not completed.
+func (ctx *ContextTree) Alive() bool { return !ctx.termed }
+
 // Done returns a receive-only channel that will be closed when this
 // context (or any of its ancestors) is terminated.
 func (ctx *ContextTree) Done() <-chan struct{} { return ctx.done }
@@ -122,7 +128,7 @@ func (ctx *ContextTree) Terminate(err error) {
 }
 
 func (ctx *ContextTree) terminate(err error) {
-	if !ctx.termed {
+	if ctx.Alive() {
 		ctx.termed = true
 		ctx.err = err
 		for child := range ctx.children {
