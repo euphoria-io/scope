@@ -35,38 +35,38 @@ const (
 type kvmap map[interface{}]interface{}
 
 func New() Context {
-	ctx := &context{
+	ctx := &ContextTree{
 		wg:       &sync.WaitGroup{},
 		done:     make(chan struct{}),
 		data:     kvmap{},
-		children: map[*context]struct{}{},
+		children: map[*ContextTree]struct{}{},
 	}
 	ctx.Set(bpmapKey, bpmap{})
 	return ctx
 }
 
-type context struct {
+type ContextTree struct {
 	wg       *sync.WaitGroup
 	m        sync.RWMutex
 	done     chan struct{}
 	err      error
 	data     kvmap
-	aliased  *context
-	children map[*context]struct{}
+	aliased  *ContextTree
+	children map[*ContextTree]struct{}
 }
 
-func (ctx *context) WaitGroup() *sync.WaitGroup { return ctx.wg }
-func (ctx *context) Done() <-chan struct{}      { return ctx.done }
-func (ctx *context) Err() error                 { return ctx.err }
-func (ctx *context) Cancel()                    { ctx.Terminate(Cancelled) }
+func (ctx *ContextTree) WaitGroup() *sync.WaitGroup { return ctx.wg }
+func (ctx *ContextTree) Done() <-chan struct{}      { return ctx.done }
+func (ctx *ContextTree) Err() error                 { return ctx.err }
+func (ctx *ContextTree) Cancel()                    { ctx.Terminate(Cancelled) }
 
-func (ctx *context) Terminate(err error) {
+func (ctx *ContextTree) Terminate(err error) {
 	ctx.m.Lock()
 	ctx.terminate(err)
 	ctx.m.Unlock()
 }
 
-func (ctx *context) terminate(err error) {
+func (ctx *ContextTree) terminate(err error) {
 	if ctx.err == nil {
 		ctx.err = err
 		for child := range ctx.children {
@@ -78,14 +78,14 @@ func (ctx *context) terminate(err error) {
 	}
 }
 
-func (ctx *context) Fork() Context {
+func (ctx *ContextTree) Fork() Context {
 	ctx.m.Lock()
 	defer ctx.m.Unlock()
 
-	child := &context{
+	child := &ContextTree{
 		wg:       ctx.wg,
 		done:     make(chan struct{}),
-		children: map[*context]struct{}{},
+		children: map[*ContextTree]struct{}{},
 	}
 	if ctx.aliased == nil {
 		child.aliased = ctx
@@ -96,12 +96,12 @@ func (ctx *context) Fork() Context {
 	return child
 }
 
-func (ctx *context) Get(key interface{}) interface{} {
+func (ctx *ContextTree) Get(key interface{}) interface{} {
 	val, _ := ctx.GetOK(key)
 	return val
 }
 
-func (ctx *context) GetOK(key interface{}) (interface{}, bool) {
+func (ctx *ContextTree) GetOK(key interface{}) (interface{}, bool) {
 	ctx.m.RLock()
 	defer ctx.m.RUnlock()
 
@@ -113,7 +113,7 @@ func (ctx *context) GetOK(key interface{}) (interface{}, bool) {
 	return val, ok
 }
 
-func (ctx *context) Set(key, val interface{}) {
+func (ctx *ContextTree) Set(key, val interface{}) {
 	ctx.m.Lock()
 	defer ctx.m.Unlock()
 
@@ -129,11 +129,11 @@ func (ctx *context) Set(key, val interface{}) {
 	ctx.data[key] = val
 }
 
-func (ctx *context) Breakpoint(scope ...interface{}) chan error {
+func (ctx *ContextTree) Breakpoint(scope ...interface{}) chan error {
 	return ctx.Get(bpmapKey).(bpmap).get(true, scope...)
 }
 
-func (ctx *context) Check(scope ...interface{}) error {
+func (ctx *ContextTree) Check(scope ...interface{}) error {
 	ch := ctx.Get(bpmapKey).(bpmap).get(false, scope...)
 	if ch == nil {
 		return nil
