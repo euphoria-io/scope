@@ -140,4 +140,4 @@ Check() call, and then write back an error to synchronize with the exit.
 		}
 	}
 */
-package scope // import "euphoria.io/scope"
+package scope
