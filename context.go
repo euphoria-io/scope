@@ -10,19 +10,48 @@ var (
 	Canceled  = Cancelled
 )
 
+// A Context is a handle on a node within a shared scope. This shared scope
+// takes the form of a tree of such nodes, for sharing state across
+// coordinating goroutines.
 type Context interface {
+	// Done returns a receive-only channel that will be closed when this
+	// context (or any of its ancestors) is terminated.
 	Done() <-chan struct{}
+
+	// Err returns the error this context was terminated with.
 	Err() error
+
+	// Cancel terminates this context (and all its descendents) with the
+	// Cancelled error.
 	Cancel()
+
+	// Terminate marks this context and all descendents as terminated.
+	// This sets the error returned by Err(), closed channels returned by
+	// Done(), and injects the given error into any pending breakpoint
+	// checks.
 	Terminate(error)
+
+	// Fork creates and returns a new context as a child of this one.
 	Fork() Context
 
+	// Get returns the value associated with the given key. If this context
+	// has had no values set, then the lookup is made on the nearest ancestor
+	// with data. If no value is found, an unboxed nil value is returned.
 	Get(key interface{}) interface{}
+
+	// GetOK returns the value associated with the given key, along with a
+	// bool value indicating successful lookup. See Get for details.
 	GetOK(key interface{}) (interface{}, bool)
+
+	// Set associates the given key and value in this context's data.
 	Set(key, val interface{})
 
+	// WaitGroup returns a wait group pointer common to the entire context
+	// tree.
 	WaitGroup() *sync.WaitGroup
 
+	// Breakpointer provides a harness for injecting errors and coordinating
+	// goroutines when unit testing.
 	Breakpointer
 }
 
@@ -34,6 +63,8 @@ const (
 
 type kvmap map[interface{}]interface{}
 
+// New returns an empty Context with no ancestor. This serves as the root
+// of a shared scope.
 func New() Context {
 	ctx := &ContextTree{
 		wg:       &sync.WaitGroup{},
@@ -45,6 +76,7 @@ func New() Context {
 	return ctx
 }
 
+// ContextTree is the default implementation of Context.
 type ContextTree struct {
 	wg       *sync.WaitGroup
 	m        sync.RWMutex
@@ -55,11 +87,25 @@ type ContextTree struct {
 	children map[*ContextTree]struct{}
 }
 
+// WaitGroup returns a wait group pointer common to the entire context
+// tree.
 func (ctx *ContextTree) WaitGroup() *sync.WaitGroup { return ctx.wg }
-func (ctx *ContextTree) Done() <-chan struct{}      { return ctx.done }
-func (ctx *ContextTree) Err() error                 { return ctx.err }
-func (ctx *ContextTree) Cancel()                    { ctx.Terminate(Cancelled) }
 
+// Done returns a receive-only channel that will be closed when this
+// context (or any of its ancestors) is terminated.
+func (ctx *ContextTree) Done() <-chan struct{} { return ctx.done }
+
+// Err returns the error this context was terminated with.
+func (ctx *ContextTree) Err() error { return ctx.err }
+
+// Cancel terminates this context (and all its descendents) with the
+// Cancelled error.
+func (ctx *ContextTree) Cancel() { ctx.Terminate(Cancelled) }
+
+// Terminate marks this context and all descendents as terminated.
+// This sets the error returned by Err(), closed channels returned by
+// Done(), and injects the given error into any pending breakpoint
+// checks.
 func (ctx *ContextTree) Terminate(err error) {
 	ctx.m.Lock()
 	ctx.terminate(err)
@@ -78,6 +124,7 @@ func (ctx *ContextTree) terminate(err error) {
 	}
 }
 
+// Fork creates and returns a new context as a child of this one.
 func (ctx *ContextTree) Fork() Context {
 	ctx.m.Lock()
 	defer ctx.m.Unlock()
@@ -96,11 +143,16 @@ func (ctx *ContextTree) Fork() Context {
 	return child
 }
 
+// Get returns the value associated with the given key. If this context
+// has had no values set, then the lookup is made on the nearest ancestor
+// with data. If no value is found, an unboxed nil value is returned.
 func (ctx *ContextTree) Get(key interface{}) interface{} {
 	val, _ := ctx.GetOK(key)
 	return val
 }
 
+// GetOK returns the value associated with the given key, along with a
+// bool value indicating successful lookup. See Get for details.
 func (ctx *ContextTree) GetOK(key interface{}) (interface{}, bool) {
 	ctx.m.RLock()
 	defer ctx.m.RUnlock()
@@ -113,6 +165,7 @@ func (ctx *ContextTree) GetOK(key interface{}) (interface{}, bool) {
 	return val, ok
 }
 
+// Set associates the given key and value in this context's data.
 func (ctx *ContextTree) Set(key, val interface{}) {
 	ctx.m.Lock()
 	defer ctx.m.Unlock()
@@ -129,10 +182,17 @@ func (ctx *ContextTree) Set(key, val interface{}) {
 	ctx.data[key] = val
 }
 
+// Breakpoint returns an error channel that can be used to synchronize
+// with a call to Check with the exact same parameters from another
+// goroutine. The call to Check will send a nil value across this
+// channel, and then receive a value to return to its caller.
 func (ctx *ContextTree) Breakpoint(scope ...interface{}) chan error {
 	return ctx.Get(bpmapKey).(bpmap).get(true, scope...)
 }
 
+// Check synchronizes with a registered breakpoint to obtain an error
+// value to return, or immediately returns nil if no breakpoint is
+// registered.
 func (ctx *ContextTree) Check(scope ...interface{}) error {
 	ch := ctx.Get(bpmapKey).(bpmap).get(false, scope...)
 	if ch == nil {

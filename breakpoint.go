@@ -1,7 +1,23 @@
 package scope
 
+// Breakpointer provides a pair of methods for synchronizing across
+// goroutines and injecting errors. The Check method can be used
+// to provide a point of synchronization/injection. In normal operation,
+// this method will quickly return nil. A unit test can then use
+// Breakpoint, with the same parameters, to obtain a bidirectional
+// error channel. Receiving from this channel will block until Check
+// is called. The call to Check will block until an error value (or nil)
+// is sent back into the channel.
 type Breakpointer interface {
+	// Breakpoint returns an error channel that can be used to synchronize
+	// with a call to Check with the exact same parameters from another
+	// goroutine. The call to Check will send a nil value across this
+	// channel, and then receive a value to return to its caller.
 	Breakpoint(scope ...interface{}) chan error
+
+	// Check synchronizes with a registered breakpoint to obtain an error
+	// value to return, or immediately returns nil if no breakpoint is
+	// registered.
 	Check(scope ...interface{}) error
 }
 
